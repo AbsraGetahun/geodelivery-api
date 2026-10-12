@@ -1,5 +1,7 @@
 import { prisma } from '../db/prisma.js';
 import { findNearestAvailableDriver } from './geoService.js';
+import { cacheDel, cacheDelPattern } from '../redis/cache.js';
+import { driverById, DRIVERS_NEARBY_PATTERN } from '../redis/keys.js';
 
 export interface CreateOrderInput {
   customerName: string;
@@ -271,5 +273,12 @@ export async function assignDriverToOrder(
   if (!updated) {
     throw new Error('Order disappeared after assignment');
   }
+
+  // Invalidate driver cache and nearby drivers cache since driver is now assigned
+  await Promise.all([
+    cacheDel(driverById(driverId)),
+    cacheDelPattern(DRIVERS_NEARBY_PATTERN),
+  ]);
+
   return { order: updated };
 }

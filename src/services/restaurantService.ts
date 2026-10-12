@@ -1,4 +1,12 @@
 import { prisma } from '../db/prisma.js';
+import { cacheGet, cacheSet, cacheDel, cacheDelPattern } from '../redis/cache.js';
+import {
+  restaurantById,
+  restaurantsList,
+  RESTAURANTS_PATTERN,
+  RESTAURANT_NEARBY_PATTERN,
+  TTL,
+} from '../redis/keys.js';
 
 export interface CreateRestaurantInput {
   name: string;
@@ -33,10 +41,33 @@ export async function createRestaurant(input: CreateRestaurantInput) {
     WHERE id = ${created.id}::uuid
   `;
 
+  // Invalidate restaurant list and nearby caches before fetching fresh copy
+  await Promise.all([
+    cacheDelPattern(RESTAURANTS_PATTERN),
+    cacheDelPattern(RESTAURANT_NEARBY_PATTERN),
+  ]);
+
   return getRestaurantById(created.id);
 }
 
 export async function listRestaurants(page: number, limit: number) {
+  const cacheKey = restaurantsList(page, limit);
+  const cached = await cacheGet<{
+    data: Array<{
+      id: string;
+      name: string;
+      address: string | null;
+      phone: string | null;
+      createdAt: Date;
+      updatedAt: Date;
+    }>;
+    total: number;
+  }>(cacheKey);
+
+  if (cached) {
+    return cached;
+  }
+
   const skip = (page - 1) * limit;
   const [total, data] = await Promise.all([
     prisma.restaurant.count(),
@@ -54,10 +85,29 @@ export async function listRestaurants(page: number, limit: number) {
       },
     }),
   ]);
-  return { data, total };
+
+  const result = { data, total };
+  await cacheSet(cacheKey, result, TTL.RESTAURANTS_LIST);
+  return result;
 }
 
 export async function getRestaurantById(id: string) {
+  const cacheKey = restaurantById(id);
+  const cached = await cacheGet<{
+    id: string;
+    name: string;
+    address: string | null;
+    phone: string | null;
+    lat: number | null;
+    lng: number | null;
+    created_at: Date;
+    updated_at: Date;
+  }>(cacheKey);
+
+  if (cached) {
+    return cached;
+  }
+
   const rows = await prisma.$queryRaw<
     Array<{
       id: string;
@@ -79,7 +129,12 @@ export async function getRestaurantById(id: string) {
     WHERE id = ${id}::uuid
     LIMIT 1
   `;
-  return rows[0] ?? null;
+
+  const restaurant = rows[0] ?? null;
+  if (restaurant) {
+    await cacheSet(cacheKey, restaurant, TTL.RESTAURANT_BY_ID);
+  }
+  return restaurant;
 }
 
 export async function updateRestaurant(id: string, input: UpdateRestaurantInput) {
@@ -103,12 +158,28 @@ export async function updateRestaurant(id: string, input: UpdateRestaurantInput)
     `;
   }
 
+  // Invalidate specific cache + list + nearby before fetching fresh copy
+  await Promise.all([
+    cacheDel(restaurantById(id)),
+    cacheDelPattern(RESTAURANTS_PATTERN),
+    cacheDelPattern(RESTAURANT_NEARBY_PATTERN),
+  ]);
+
   return getRestaurantById(id);
 }
 
 export async function deleteRestaurant(id: string) {
   const existing = await prisma.restaurant.findUnique({ where: { id } });
   if (!existing) return false;
+
   await prisma.restaurant.delete({ where: { id } });
+
+  // Invalidate specific cache + list + nearby after delete
+  await Promise.all([
+    cacheDel(restaurantById(id)),
+    cacheDelPattern(RESTAURANTS_PATTERN),
+    cacheDelPattern(RESTAURANT_NEARBY_PATTERN),
+  ]);
+
   return true;
 }

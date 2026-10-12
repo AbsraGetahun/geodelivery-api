@@ -1,4 +1,6 @@
 import { prisma } from '../db/prisma.js';
+import { cacheGet, cacheSet, cacheDel, cacheDelPattern } from '../redis/cache.js';
+import { driverById, DRIVER_PATTERN, DRIVERS_NEARBY_PATTERN, TTL } from '../redis/keys.js';
 
 export interface CreateDriverInput {
   name: string;
@@ -25,6 +27,10 @@ export interface DriverRecord {
   updated_at: Date;
 }
 
+function driverListKey(page: number, limit: number): string {
+  return `driver:list:${page}:${limit}`;
+}
+
 export async function createDriver(input: CreateDriverInput): Promise<DriverRecord | null> {
   const created = await prisma.driver.create({
     data: {
@@ -40,10 +46,23 @@ export async function createDriver(input: CreateDriverInput): Promise<DriverReco
     WHERE id = ${created.id}::uuid
   `;
 
+  // Invalidate driver lists and nearby caches
+  await Promise.all([
+    cacheDelPattern(DRIVER_PATTERN),
+    cacheDelPattern(DRIVERS_NEARBY_PATTERN),
+  ]);
+
   return getDriverById(created.id);
 }
 
 export async function listDrivers(page: number, limit: number): Promise<{ data: DriverRecord[]; total: number }> {
+  const cacheKey = driverListKey(page, limit);
+  const cached = await cacheGet<{ data: DriverRecord[]; total: number }>(cacheKey);
+
+  if (cached) {
+    return cached;
+  }
+
   const skip = (page - 1) * limit;
 
   const [total, rows] = await Promise.all([
@@ -65,10 +84,19 @@ export async function listDrivers(page: number, limit: number): Promise<{ data: 
     `,
   ]);
 
-  return { data: rows, total };
+  const result = { data: rows, total };
+  await cacheSet(cacheKey, result, TTL.DRIVER_BY_ID);
+  return result;
 }
 
 export async function getDriverById(id: string): Promise<DriverRecord | null> {
+  const cacheKey = driverById(id);
+  const cached = await cacheGet<DriverRecord>(cacheKey);
+
+  if (cached) {
+    return cached;
+  }
+
   const rows = await prisma.$queryRaw<DriverRecord[]>`
     SELECT
       id,
@@ -84,7 +112,11 @@ export async function getDriverById(id: string): Promise<DriverRecord | null> {
     LIMIT 1
   `;
 
-  return rows[0] ?? null;
+  const driver = rows[0] ?? null;
+  if (driver) {
+    await cacheSet(cacheKey, driver, TTL.DRIVER_BY_ID);
+  }
+  return driver;
 }
 
 export async function updateDriver(id: string, input: UpdateDriverInput): Promise<DriverRecord | null> {
@@ -108,6 +140,13 @@ export async function updateDriver(id: string, input: UpdateDriverInput): Promis
     `;
   }
 
+  // Invalidate specific cache + driver list + nearby drivers before fetching fresh copy
+  await Promise.all([
+    cacheDel(driverById(id)),
+    cacheDelPattern(DRIVER_PATTERN),
+    cacheDelPattern(DRIVERS_NEARBY_PATTERN),
+  ]);
+
   return getDriverById(id);
 }
 
@@ -122,6 +161,13 @@ export async function updateDriverLocation(id: string, lat: number, lng: number)
     WHERE id = ${id}::uuid
   `;
 
+  // Invalidate specific cache + driver list + nearby drivers
+  await Promise.all([
+    cacheDel(driverById(id)),
+    cacheDelPattern(DRIVER_PATTERN),
+    cacheDelPattern(DRIVERS_NEARBY_PATTERN),
+  ]);
+
   return getDriverById(id);
 }
 
@@ -134,12 +180,28 @@ export async function setDriverAvailability(id: string, isAvailable: boolean): P
     data: { isAvailable },
   });
 
+  // Invalidate specific cache + driver list + nearby drivers
+  await Promise.all([
+    cacheDel(driverById(id)),
+    cacheDelPattern(DRIVER_PATTERN),
+    cacheDelPattern(DRIVERS_NEARBY_PATTERN),
+  ]);
+
   return getDriverById(id);
 }
 
 export async function deleteDriver(id: string): Promise<boolean> {
   const existing = await prisma.driver.findUnique({ where: { id } });
   if (!existing) return false;
+
   await prisma.driver.delete({ where: { id } });
+
+  // Invalidate specific cache + driver list + nearby drivers
+  await Promise.all([
+    cacheDel(driverById(id)),
+    cacheDelPattern(DRIVER_PATTERN),
+    cacheDelPattern(DRIVERS_NEARBY_PATTERN),
+  ]);
+
   return true;
 }

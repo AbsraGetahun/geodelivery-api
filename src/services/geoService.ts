@@ -1,5 +1,7 @@
 import { prisma } from '../db/prisma.js';
 import type { RestaurantWithDistance } from '../types/index.js';
+import { cacheGet, cacheSet } from '../redis/cache.js';
+import { restaurantsNearby, driversNearby, TTL } from '../redis/keys.js';
 
 export interface DriverWithDistance {
   id: string;
@@ -22,6 +24,16 @@ export interface EtaResult {
 }
 
 /**
+ * Helper to round coordinates to 4 decimal places (~11 meters precision).
+ * Used exclusively for cache keys so nearby queries at slightly different coordinates
+ * share a cache entry, avoiding cache fragmentation. The unrounded coordinates are
+ * still passed to the underlying PostGIS query for accurate spatial calculations.
+ */
+function roundCoord(coord: number): number {
+  return Math.round(coord * 10000) / 10000;
+}
+
+/**
  * Find restaurants within `radiusMeters` of the given point.
  *
  * Uses PostGIS ST_DWithin (index-aware via GiST) for filtering, and
@@ -37,6 +49,14 @@ export async function findRestaurantsNearby(
   radiusMeters: number,
   limit = 50
 ): Promise<RestaurantWithDistance[]> {
+  // Round coordinates to 4 decimals for the cache key to improve cache hit ratio for nearby requests
+  const cacheKey = restaurantsNearby(roundCoord(lat), roundCoord(lng), radiusMeters);
+  const cached = await cacheGet<RestaurantWithDistance[]>(cacheKey);
+
+  if (cached) {
+    return cached;
+  }
+
   const rows = await prisma.$queryRaw<RestaurantWithDistance[]>`
     SELECT
       id,
@@ -59,6 +79,8 @@ export async function findRestaurantsNearby(
     ORDER BY distance_meters ASC
     LIMIT ${limit};
   `;
+
+  await cacheSet(cacheKey, rows, TTL.RESTAURANTS_NEARBY);
   return rows;
 }
 
@@ -74,6 +96,14 @@ export async function findDriversNearby(
   radiusMeters: number,
   limit = 50
 ): Promise<DriverWithDistance[]> {
+  // Round coordinates to 4 decimals for the cache key to improve cache hit ratio
+  const cacheKey = driversNearby(roundCoord(lat), roundCoord(lng), radiusMeters);
+  const cached = await cacheGet<DriverWithDistance[]>(cacheKey);
+
+  if (cached) {
+    return cached;
+  }
+
   const rows = await prisma.$queryRaw<DriverWithDistance[]>`
     SELECT
       id,
@@ -97,12 +127,15 @@ export async function findDriversNearby(
     ORDER BY distance_meters ASC
     LIMIT ${limit};
   `;
+
+  await cacheSet(cacheKey, rows, TTL.DRIVERS_NEARBY);
   return rows;
 }
 
 /**
  * Find the single nearest available driver within `radiusMeters` of the given point.
  * Used for auto-assigning or suggesting a driver for a new order.
+ * DO NOT CACHE: Used for real-time assignment.
  */
 export async function findNearestAvailableDriver(
   lat: number,
@@ -140,6 +173,7 @@ export async function findNearestAvailableDriver(
  * Joins drivers + orders on the given ids.
  * Formula: eta_seconds = ROUND(distance_meters / 8.0) (~8 m/s or 28.8 km/h).
  * Returns null if driver or order not found OR either location is null.
+ * DO NOT CACHE: Inherently real-time.
  */
 export async function calculateEta(
   driverId: string,

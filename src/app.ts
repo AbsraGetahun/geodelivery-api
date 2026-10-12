@@ -2,6 +2,8 @@ import express, { type Express, type Request, type Response, type NextFunction }
 import restaurantsRouter from './routes/restaurants.js';
 import driversRouter from './routes/drivers.js';
 import ordersRouter from './routes/orders.js';
+import { cacheLogger } from './middleware/cacheLogger.js';
+import redis from './redis/client.js';
 
 export function createApp(): Express {
   const app = express();
@@ -9,11 +11,25 @@ export function createApp(): Express {
   // Built-in middleware — parses JSON request bodies
   app.use(express.json());
 
-  // Health check
-  app.get('/health', (_req: Request, res: Response) => {
+  // Request logger middleware
+  app.use(cacheLogger);
+
+  // Health check with Redis ping
+  app.get('/health', async (_req: Request, res: Response) => {
+    let redisStatus: 'ok' | 'error' = 'ok';
+    try {
+      const pong = await redis.ping();
+      if (pong !== 'PONG') {
+        redisStatus = 'error';
+      }
+    } catch {
+      redisStatus = 'error';
+    }
+
     res.json({
       status: 'ok',
       service: 'geodelivery-api',
+      redis: redisStatus,
       timestamp: new Date().toISOString(),
     });
   });
