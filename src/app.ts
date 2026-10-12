@@ -1,4 +1,5 @@
 import express, { type Express, type Request, type Response, type NextFunction } from 'express';
+import restaurantsRouter from './routes/restaurants.js';
 
 export function createApp(): Express {
   const app = express();
@@ -14,6 +15,9 @@ export function createApp(): Express {
       timestamp: new Date().toISOString(),
     });
   });
+
+  // Feature routers
+  app.use('/restaurants', restaurantsRouter);
 
   // 404 handler (must come after all routes)
   app.use((_req: Request, res: Response) => {
