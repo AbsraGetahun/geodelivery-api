@@ -1,5 +1,6 @@
 import express, { type Express, type Request, type Response, type NextFunction } from 'express';
 import restaurantsRouter from './routes/restaurants.js';
+import driversRouter from './routes/drivers.js';
 
 export function createApp(): Express {
   const app = express();
@@ -18,6 +19,7 @@ export function createApp(): Express {
 
   // Feature routers
   app.use('/restaurants', restaurantsRouter);
+  app.use('/drivers', driversRouter);
 
   // 404 handler (must come after all routes)
   app.use((_req: Request, res: Response) => {
