@@ -1,6 +1,14 @@
 import type { Request, Response, NextFunction } from 'express';
 import * as restaurantService from '../services/restaurantService.js';
 import { findRestaurantsNearby } from '../services/geoService.js';
+import type { ValidatedReq } from '../middleware/validateRequest.js';
+import type {
+  CreateRestaurantInput,
+  UpdateRestaurantInput,
+  NearbyRestaurantInput,
+  ListRestaurantsInput,
+  RestaurantIdInput,
+} from '../schemas/restaurantSchema.js';
 
 function parsePagination(query: Record<string, unknown>) {
   const page = Math.max(1, Number(query.page ?? 1) || 1);
@@ -10,6 +18,8 @@ function parsePagination(query: Record<string, unknown>) {
 }
 
 function getIdParam(req: Request): string {
+  const vParams = (req as ValidatedReq).validatedParams as RestaurantIdInput | undefined;
+  if (vParams?.id) return vParams.id;
   const id = req.params.id;
   return Array.isArray(id) ? id[0] : id;
 }
@@ -21,11 +31,7 @@ export async function createRestaurant(
   next: NextFunction
 ): Promise<void> {
   try {
-    const { name, address, phone, lat, lng } = req.body ?? {};
-    if (typeof name !== 'string' || typeof lat !== 'number' || typeof lng !== 'number') {
-      res.status(400).json({ error: 'name, lat, lng are required' });
-      return;
-    }
+    const { name, address, phone, lat, lng } = req.body as CreateRestaurantInput;
     const created = await restaurantService.createRestaurant({ name, address, phone, lat, lng });
     res.status(201).json(created);
   } catch (err) {
@@ -40,7 +46,8 @@ export async function listRestaurants(
   next: NextFunction
 ): Promise<void> {
   try {
-    const { page, limit } = parsePagination(req.query);
+    const vQuery = (req as ValidatedReq).validatedQuery as ListRestaurantsInput | undefined;
+    const { page, limit } = vQuery ?? parsePagination(req.query);
     const { data, total } = await restaurantService.listRestaurants(page, limit);
     res.json({
       data,
@@ -63,18 +70,10 @@ export async function getNearbyRestaurants(
   next: NextFunction
 ): Promise<void> {
   try {
-    const lat = Number(req.query.lat);
-    const lng = Number(req.query.lng);
-    const radius = Number(req.query.radius ?? 2000);
-
-    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
-      res.status(400).json({ error: 'lat and lng are required and must be numeric' });
-      return;
-    }
-    if (!Number.isFinite(radius) || radius <= 0 || radius > 50_000) {
-      res.status(400).json({ error: 'radius must be between 0 and 50000 meters' });
-      return;
-    }
+    const vQuery = (req as ValidatedReq).validatedQuery as NearbyRestaurantInput | undefined;
+    const lat = vQuery?.lat ?? Number(req.query.lat);
+    const lng = vQuery?.lng ?? Number(req.query.lng);
+    const radius = vQuery?.radius ?? Number(req.query.radius ?? 2000);
 
     const results = await findRestaurantsNearby(lat, lng, radius);
     res.json({ data: results, count: results.length });
@@ -110,7 +109,8 @@ export async function updateRestaurant(
 ): Promise<void> {
   try {
     const id = getIdParam(req);
-    const updated = await restaurantService.updateRestaurant(id, req.body ?? {});
+    const body = req.body as UpdateRestaurantInput;
+    const updated = await restaurantService.updateRestaurant(id, body ?? {});
     if (!updated) {
       res.status(404).json({ error: 'Restaurant not found' });
       return;

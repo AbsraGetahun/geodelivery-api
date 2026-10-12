@@ -1,6 +1,14 @@
 import type { Request, Response, NextFunction } from 'express';
 import * as orderService from '../services/orderService.js';
 import { calculateEta } from '../services/geoService.js';
+import type { ValidatedReq } from '../middleware/validateRequest.js';
+import type {
+  CreateOrderInput,
+  UpdateOrderStatusInput,
+  AssignDriverInput,
+  ListOrdersInput,
+  OrderIdInput,
+} from '../schemas/orderSchema.js';
 
 function parsePagination(query: Record<string, unknown>) {
   const page = Math.max(1, Number(query.page ?? 1) || 1);
@@ -10,6 +18,8 @@ function parsePagination(query: Record<string, unknown>) {
 }
 
 function getIdParam(req: Request): string {
+  const vParams = (req as ValidatedReq).validatedParams as OrderIdInput | undefined;
+  if (vParams?.id) return vParams.id;
   const id = req.params.id;
   return Array.isArray(id) ? id[0] : id;
 }
@@ -17,25 +27,8 @@ function getIdParam(req: Request): string {
 // POST /orders
 export async function createOrder(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const { customer_name, customer_phone, restaurant_id, total_amount, lat, lng } = req.body ?? {};
-
-    if (
-      typeof customer_name !== 'string' ||
-      typeof restaurant_id !== 'string' ||
-      typeof total_amount !== 'number' ||
-      typeof lat !== 'number' ||
-      typeof lng !== 'number'
-    ) {
-      res.status(400).json({
-        error: 'customer_name, restaurant_id, total_amount, lat, lng are required with valid types',
-      });
-      return;
-    }
-
-    if (customer_phone !== undefined && typeof customer_phone !== 'string') {
-      res.status(400).json({ error: 'customer_phone must be a string' });
-      return;
-    }
+    const { customer_name, customer_phone, restaurant_id, total_amount, lat, lng } =
+      req.body as CreateOrderInput;
 
     const result = await orderService.createOrder({
       customerName: customer_name,
@@ -62,10 +55,11 @@ export async function createOrder(req: Request, res: Response, next: NextFunctio
 // GET /orders
 export async function listOrders(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const { page, limit } = parsePagination(req.query);
-    const status = typeof req.query.status === 'string' ? req.query.status : undefined;
-    const fromDate = typeof req.query.from === 'string' ? req.query.from : undefined;
-    const toDate = typeof req.query.to === 'string' ? req.query.to : undefined;
+    const vQuery = (req as ValidatedReq).validatedQuery as ListOrdersInput | undefined;
+    const { page, limit } = vQuery ?? parsePagination(req.query);
+    const status = vQuery?.status ?? (typeof req.query.status === 'string' ? req.query.status : undefined);
+    const fromDate = vQuery?.from ?? (typeof req.query.from === 'string' ? req.query.from : undefined);
+    const toDate = vQuery?.to ?? (typeof req.query.to === 'string' ? req.query.to : undefined);
 
     const { data, total } = await orderService.listOrders({
       page,
@@ -107,16 +101,9 @@ export async function getOrder(req: Request, res: Response, next: NextFunction):
 // PATCH /orders/:id/status
 export async function updateOrderStatus(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const { status } = req.body ?? {};
-
-    if (typeof status !== 'string' || !orderService.VALID_ORDER_STATUSES.includes(status as orderService.OrderStatus)) {
-      res.status(400).json({
-        error: `status must be one of: ${orderService.VALID_ORDER_STATUSES.join(', ')}`,
-      });
-      return;
-    }
-
     const id = getIdParam(req);
+    const { status } = req.body as UpdateOrderStatusInput;
+
     const updated = await orderService.updateOrderStatus(id, status);
     if (!updated) {
       res.status(404).json({ error: 'Order not found' });
@@ -157,14 +144,9 @@ export async function cancelOrder(req: Request, res: Response, next: NextFunctio
 // PATCH /orders/:id/assign
 export async function assignDriver(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const { driver_id } = req.body ?? {};
-
-    if (typeof driver_id !== 'string') {
-      res.status(400).json({ error: 'driver_id is required and must be a string' });
-      return;
-    }
-
     const id = getIdParam(req);
+    const { driver_id } = req.body as AssignDriverInput;
+
     const result = await orderService.assignDriverToOrder(id, driver_id);
 
     if ('error' in result) {
