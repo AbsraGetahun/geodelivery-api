@@ -1,0 +1,73 @@
+// GeoDelivery API - Prisma schema
+// Docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  
+}
+
+// ---------------------------------------------
+// Restaurant
+// Note: the `location` column is a PostGIS GEOGRAPHY
+// that Prisma cannot express. It's added via a raw
+// SQL migration after this schema is applied.
+// ---------------------------------------------
+model Restaurant {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String   @db.VarChar(255)
+  address   String?
+  phone     String?  @db.VarChar(20)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  orders    Order[]
+
+  @@map("restaurants")
+}
+
+// ---------------------------------------------
+// Driver
+// Same as Restaurant: `location` is PostGIS
+// GEOGRAPHY, added via raw SQL migration.
+// ---------------------------------------------
+model Driver {
+  id          String   @id @default(uuid()) @db.Uuid
+  name        String   @db.VarChar(255)
+  phone       String?  @db.VarChar(20)
+  isAvailable Boolean  @default(true) @map("is_available")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  orders      Order[]
+
+  @@map("drivers")
+}
+
+// ---------------------------------------------
+// Order
+// `customer_location` is PostGIS GEOGRAPHY, added
+// via raw SQL migration.
+// ---------------------------------------------
+model Order {
+  id             String    @id @default(uuid()) @db.Uuid
+  customerName   String    @map("customer_name") @db.VarChar(255)
+  customerPhone  String?   @map("customer_phone") @db.VarChar(20)
+  restaurantId   String    @map("restaurant_id") @db.Uuid
+  driverId       String?   @map("driver_id") @db.Uuid
+  status         String    @default("pending") @db.VarChar(50)
+  totalAmount    Decimal   @map("total_amount") @db.Decimal(10, 2)
+  createdAt      DateTime  @default(now()) @map("created_at")
+  deliveredAt    DateTime? @map("delivered_at")
+
+  restaurant     Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  driver         Driver?    @relation(fields: [driverId], references: [id], onDelete: SetNull)
+
+  @@index([status])
+  @@index([createdAt])
+  @@index([restaurantId, status])
+  @@map("orders")
+}

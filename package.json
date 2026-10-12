@@ -1,0 +1,36 @@
+{
+  "name": "geodelivery-api",
+  "version": "0.1.0",
+  "description": "Node.js + PostGIS delivery tracking backend with Redis caching",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "postgis",
+    "postgresql",
+    "redis",
+    "express",
+    "typescript",
+    "geospatial",
+    "delivery"
+  ],
+  "author": "absragetahun",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/pg": "^8.23.1",
+    "prisma": "^7.10.0",
+    "tsx": "^4.23.15",
+    "typescript": "^5.6.0"
+  },
+  "dependencies": {
+    "@prisma/client": "^7.10.0",
+    "dotenv": "^18.0.7",
+    "pg": "^8.23.1"
+  }
+}
